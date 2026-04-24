@@ -1,0 +1,33 @@
+FINTRACK APP SUMMARY
+
+What it is
+- FinTrack is a Next.js web app that pulls transaction-related Gmail messages and converts them into a personal finance dashboard.
+- It parses debits/credits, bank names, VPAs, and categories, then visualizes spending and income trends.
+
+Who it's for
+- Primary persona: an individual user who receives UPI/bank transaction alerts in Gmail and wants quick, local-first expense tracking.
+
+What it does
+- Gmail OAuth login with read-only Gmail scope, then fetches current-month transaction emails.
+- Parses amount, debit/credit type, bank, VPA, date, and category from email headers/body.
+- Displays dashboard cards for total expenses and total income.
+- Shows charts for income-vs-expense over time and spending-by-category.
+- Provides bank-wise and person-wise drill-down pages with transaction totals.
+- Supports month/custom/all-time filters plus quick presets (this month, last month, etc.).
+- Lets users override transaction category labels and stores overrides locally.
+
+How it works (repo evidence)
+- UI layer: Next.js App Router pages in /app with reusable components (Layout, Sidebar, charts, tables).
+- Auth layer: AuthContext uses Google Identity token client and stores gmail_token in localStorage.
+- Data layer: app/lib/gmailService.js fetches Gmail message list/details; app/lib/parseTransaction.js applies regex/rule parsing.
+- State layer: TransactionContext stores transactions/date filters and computes filteredTransactions.
+- Security/session: passcode setup/unlock pages hash PIN via Web Crypto; app auto-locks after 5 minutes idle.
+- Persistence: localStorage/sessionStorage for token, PIN hash, category overrides; no server/database layer found in repo.
+- Not found in repo: backend API service, database schema, automated tests, CI/CD pipeline details.
+
+How to run (minimal)
+- Prereq: Node.js (version not specified in repo).
+- Install dependencies: npm install
+- Set env var in .env.local: NEXT_PUBLIC_GOOGLE_CLIENT_ID=<your_google_client_id>
+- Start dev server: npm run dev
+- Open: http://localhost:3000

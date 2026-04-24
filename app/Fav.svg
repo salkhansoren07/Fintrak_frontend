@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+  </defs>
+  <path d="M50 5L15 20V45C15 67.5 50 95 50 95C50 95 85 67.5 85 45V20L50 5Z" fill="url(#g)" />
+  <text x="50" y="65" fill="white" font-size="40" font-weight="bold" text-anchor="middle" font-family="sans-serif">₹</text>
+</svg>

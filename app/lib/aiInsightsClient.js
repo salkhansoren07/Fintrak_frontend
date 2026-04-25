@@ -1,9 +1,11 @@
+import { apiFetch } from "./apiClient.js";
+
 export async function fetchAiInsights(
   transactions,
   signal,
   { forceRefresh = false } = {}
 ) {
-  const res = await fetch("/api/ai/insights", {
+  const res = await apiFetch("/api/ai/insights", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

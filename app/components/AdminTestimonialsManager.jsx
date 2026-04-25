@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { CheckCircle2, Pin, ShieldAlert, XCircle } from "lucide-react";
+import { apiFetch } from "../lib/apiClient.js";
 import { reportClientWarning } from "../lib/observability.client.js";
 
 function StatusBadge({ status, featured }) {
@@ -119,7 +120,7 @@ export default function AdminTestimonialsManager() {
       setError("");
 
       try {
-        const response = await fetch("/api/admin/testimonials", {
+        const response = await apiFetch("/api/admin/testimonials", {
           cache: "no-store",
         });
         const payload = await response.json().catch(() => ({}));
@@ -174,7 +175,7 @@ export default function AdminTestimonialsManager() {
     startTransition(async () => {
       setError("");
 
-      const response = await fetch("/api/admin/testimonials", {
+      const response = await apiFetch("/api/admin/testimonials", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

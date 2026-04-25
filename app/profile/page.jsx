@@ -14,6 +14,7 @@ import {
 import Layout from "../components/Layout";
 import { useAuth } from "../context/AuthContext";
 import { clearAllPinVerifications } from "../lib/clientSession";
+import { apiFetch } from "../lib/apiClient.js";
 import { reportClientWarning } from "../lib/observability.client.js";
 
 const SUPPORT_EMAIL = "support@fintrak.online";
@@ -87,7 +88,7 @@ export default function ProfilePage() {
       setFeedbackLoading(true);
 
       try {
-        const response = await fetch("/api/testimonials", {
+        const response = await apiFetch("/api/testimonials", {
           cache: "no-store",
         });
         const payload = await response.json().catch(() => ({}));
@@ -157,7 +158,7 @@ export default function ProfilePage() {
     setSuccessMessage("");
 
     startDeleteTransition(async () => {
-      const res = await fetch("/api/account", {
+      const res = await apiFetch("/api/account", {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
@@ -185,7 +186,7 @@ export default function ProfilePage() {
     setFeedbackSuccess("");
 
     startFeedbackTransition(async () => {
-      const response = await fetch("/api/testimonials", {
+      const response = await apiFetch("/api/testimonials", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

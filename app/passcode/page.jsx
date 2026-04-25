@@ -3,6 +3,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { apiFetch } from "../lib/apiClient.js";
 import { setPinVerified } from "../lib/clientSession";
 
 const SESSION_EXPIRED_REDIRECT = "/get-started?tab=login&authMessage=session_expired";
@@ -28,7 +29,7 @@ export default function PasscodePage() {
 
     setError("");
     startTransition(async () => {
-      const res = await fetch("/api/passcode", {
+      const res = await apiFetch("/api/passcode", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

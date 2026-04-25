@@ -1,5 +1,7 @@
+import { apiFetch } from "./apiClient.js";
+
 export async function fetchCloudUserData() {
-  const res = await fetch("/api/user-data", {
+  const res = await apiFetch("/api/user-data", {
     cache: "no-store",
   });
 
@@ -9,7 +11,7 @@ export async function fetchCloudUserData() {
 }
 
 export async function saveCloudUserData(payload) {
-  const res = await fetch("/api/user-data", {
+  const res = await apiFetch("/api/user-data", {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",

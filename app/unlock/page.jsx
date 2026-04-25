@@ -3,6 +3,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Lock } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { apiFetch } from "../lib/apiClient.js";
 import {
   clearPinVerification,
   setPinVerified,
@@ -29,7 +30,7 @@ export default function Unlock() {
     }
 
     startTransition(async () => {
-      const res = await fetch("/api/passcode/verify", {
+      const res = await apiFetch("/api/passcode/verify", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -78,7 +79,7 @@ export default function Unlock() {
   const confirmResetPin = () => {
     startTransition(async () => {
       if (user?.id) {
-        const res = await fetch("/api/passcode", {
+        const res = await apiFetch("/api/passcode", {
           method: "DELETE",
           headers: {
             "Content-Type": "application/json",

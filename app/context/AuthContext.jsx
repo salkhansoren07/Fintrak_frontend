@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { clearAllPinVerifications } from "../lib/clientSession";
+import { apiFetch, buildApiUrl } from "../lib/apiClient.js";
 import {
   reportClientError,
   reportClientWarning,
@@ -10,7 +11,7 @@ import {
 const AuthContext = createContext();
 
 async function fetchSession() {
-  const res = await fetch("/api/auth/session", { cache: "no-store" });
+  const res = await apiFetch("/api/auth/session", { cache: "no-store" });
   if (!res.ok) {
     throw new Error("Failed to load auth session");
   }
@@ -18,7 +19,7 @@ async function fetchSession() {
 }
 
 async function postJson(url, body) {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -79,7 +80,7 @@ export function AuthProvider({ children }) {
       search.set("consent", "1");
     }
     const suffix = search.toString() ? `?${search.toString()}` : "";
-    window.location.assign(`/api/auth/google/start${suffix}`);
+    window.location.assign(buildApiUrl(`/api/auth/google/start${suffix}`));
   }, []);
 
   const signup = useCallback(async ({ username, email, password }) => {
@@ -109,7 +110,7 @@ export function AuthProvider({ children }) {
 
   const clearSession = useCallback(async () => {
     try {
-      await fetch("/api/auth/logout", {
+      await apiFetch("/api/auth/logout", {
         method: "POST",
       });
     } catch (error) {

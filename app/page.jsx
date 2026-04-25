@@ -1,6 +1,5 @@
 import Link from "next/link";
 import Image from "next/image";
-import { cookies } from "next/headers";
 import {
   ArrowRight,
   BarChart3,
@@ -16,11 +15,7 @@ import {
 } from "lucide-react";
 import DashboardScreenshots from "./components/DashboardScreenshots";
 import HomeDashboardClient from "./components/HomeDashboardClient";
-import { getFintrakUserById } from "./lib/fintrakUsers";
-import { reportServerError } from "./lib/observability.server.js";
-import { readSessionFromCookieStore } from "./lib/serverAuth";
-import { getSupabaseAdmin, hasSupabaseAdminConfig } from "./lib/supabaseAdmin";
-import { readHomepageTestimonials } from "./lib/testimonials.js";
+import { serverApiJson } from "./lib/serverApi.js";
 
 const SUPPORT_EMAIL = "support@fintrak.online";
 
@@ -375,50 +370,22 @@ function DesktopHeroSection({ authErrorMessage }) {
 }
 
 async function hasAuthenticatedHomeSession() {
-  const cookieStore = await cookies();
-  const session = readSessionFromCookieStore(cookieStore);
-
-  if (!session?.id) {
-    return false;
-  }
-
-  if (!hasSupabaseAdminConfig()) {
-    return true;
-  }
-
-  const { user, error } = await getFintrakUserById(getSupabaseAdmin(), session.id);
-
-  if (error) {
-    await reportServerError({
-      event: "homepage.session_verification_failed",
-      message: "Failed to verify homepage session user.",
-      error,
-      context: { sessionUserId: session.id },
-    });
-    return false;
-  }
-
-  return Boolean(user);
+  const { ok, payload } = await serverApiJson("/auth/session");
+  return Boolean(ok && payload?.authenticated && payload?.user?.id);
 }
 
 async function loadHomepageTestimonials() {
-  if (!hasSupabaseAdminConfig()) {
+  const { ok, payload } = await serverApiJson("/public/testimonials", {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!ok || payload?.available === false) {
     return [];
   }
 
-  const supabase = getSupabaseAdmin();
-  const { testimonials, error } = await readHomepageTestimonials(supabase);
-
-  if (error) {
-    await reportServerError({
-      event: "homepage.testimonials.read_failed",
-      message: "Failed to load approved homepage testimonials.",
-      error,
-    });
-    return [];
-  }
-
-  return testimonials;
+  return Array.isArray(payload?.testimonials) ? payload.testimonials : [];
 }
 
 function TestimonialCard({ testimonial }) {

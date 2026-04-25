@@ -1,5 +1,7 @@
+import { apiFetch } from "./apiClient.js";
+
 export async function fetchGmailTransactions() {
-  const res = await fetch("/api/gmail-transactions", {
+  const res = await apiFetch("/api/gmail-transactions", {
     cache: "no-store",
   });
 

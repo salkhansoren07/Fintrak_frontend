@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { ArrowRight, LifeBuoy, Mail } from "lucide-react";
+import { apiFetch } from "../lib/apiClient.js";
 
 const SUPPORT_EMAIL = "support@fintrak.online";
 
@@ -17,7 +18,7 @@ export default function ForgotPasswordPage() {
     setSuccessMessage("");
 
     startTransition(async () => {
-      const response = await fetch("/api/auth/forgot-password", {
+      const response = await apiFetch("/api/auth/forgot-password", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

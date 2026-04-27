@@ -1,5 +1,7 @@
 "use client";
 
+import { buildApiUrl } from "./apiClient.js";
+
 function sanitizeString(value, maxLength = 500) {
   const normalized = String(value || "").trim();
   return normalized.length > maxLength
@@ -79,13 +81,7 @@ function buildPayload({ level = "error", event, message, error, context }) {
 function sendClientEvent(payload) {
   const body = JSON.stringify(payload);
 
-  if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
-    const blob = new Blob([body], { type: "application/json" });
-    navigator.sendBeacon("/api/observability", blob);
-    return;
-  }
-
-  fetch("/api/observability", {
+  fetch(buildApiUrl("/api/observability"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

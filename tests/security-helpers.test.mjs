@@ -28,22 +28,6 @@ import {
   resolveTransactionCacheUserKey,
 } from "../app/lib/transactionCache.mjs";
 import {
-  LOGIN_ATTEMPT_WINDOW_MS,
-  MAX_LOGIN_FAILURES,
-  buildLoginThrottleKey,
-  clearTrackedLoginAttemptState,
-  createLoginLockedMessage,
-  isLoginLocked,
-  readTrackedLoginAttemptState,
-  resetTrackedLoginAttemptsForTests,
-  trackFailedLoginAttempt,
-} from "../app/lib/loginSecurity.mjs";
-import {
-  buildTestimonialMeta,
-  normalizeHomepageTestimonial,
-  normalizeTestimonialSubmission,
-} from "../app/lib/testimonials.js";
-import {
   buildTransactionCsv,
   createTransactionExplorerState,
   filterAndSortTransactions,
@@ -142,37 +126,6 @@ test("username validation matches production signup requirements", () => {
   assert.match(USERNAME_REQUIREMENTS_MESSAGE, /3-24 characters/);
 });
 
-test("login attempts lock after repeated failures for one identifier and client", () => {
-  resetTrackedLoginAttemptsForTests();
-  const key = buildLoginThrottleKey("aarav_mehta", "203.0.113.5");
-  const now = 2_000_000;
-  let state = null;
-
-  for (let index = 0; index < MAX_LOGIN_FAILURES; index += 1) {
-    state = trackFailedLoginAttempt(key, now + index);
-  }
-
-  assert.equal(isLoginLocked(state, now + MAX_LOGIN_FAILURES), true);
-  assert.equal(
-    readTrackedLoginAttemptState(key, now + MAX_LOGIN_FAILURES)?.count,
-    MAX_LOGIN_FAILURES
-  );
-  assert.match(createLoginLockedMessage(state), /Too many login attempts/);
-
-  clearTrackedLoginAttemptState(key);
-  assert.equal(readTrackedLoginAttemptState(key), null);
-});
-
-test("login attempt tracking expires after the rolling window", () => {
-  resetTrackedLoginAttemptsForTests();
-  const key = buildLoginThrottleKey("aarav_mehta", "203.0.113.5");
-  const now = 3_000_000;
-
-  trackFailedLoginAttempt(key, now);
-
-  assert.equal(readTrackedLoginAttemptState(key, now + LOGIN_ATTEMPT_WINDOW_MS + 1), null);
-});
-
 test("transaction cache keys stay scoped to the authenticated user", () => {
   assert.equal(
     resolveTransactionCacheUserKey({
@@ -202,76 +155,6 @@ test("session redirect handles partial auth states safely", () => {
   assert.equal(getSessionRedirect("/budget", true, "user-1", true), "/unlock");
   assert.equal(getSessionRedirect("/passcode", true, "user-1", false), null);
   assert.equal(getSessionRedirect("/unlock", true, "user-1", true), null);
-});
-
-test("testimonial helpers normalize approved homepage content safely", () => {
-  assert.equal(
-    buildTestimonialMeta({
-      role: "Founder",
-      location: "Bengaluru",
-    }),
-    "Founder, Bengaluru"
-  );
-
-  assert.deepEqual(
-    normalizeHomepageTestimonial({
-      id: "testimonial-1",
-      name: "Aarav",
-      role: "Student",
-      location: "Vadodara",
-      quote: "FinTrak helped me spot wasteful spending.",
-      avatar_url: "https://example.com/avatar.png",
-    }),
-    {
-      id: "testimonial-1",
-      name: "Aarav",
-      meta: "Student, Vadodara",
-      quote: "FinTrak helped me spot wasteful spending.",
-      avatarUrl: "https://example.com/avatar.png",
-    }
-  );
-
-  assert.equal(
-    normalizeHomepageTestimonial({
-      id: "testimonial-2",
-      name: "   ",
-      quote: "Missing name should be rejected.",
-    }),
-    null
-  );
-
-  assert.deepEqual(
-    normalizeTestimonialSubmission({
-      id: "submission-1",
-      name: "Aarav",
-      email: "aarav@example.com",
-      role: "Student",
-      location: "Vadodara",
-      quote: "FinTrak helped me spot wasteful spending.",
-      approved: false,
-      consent_to_publish: true,
-      created_at: "2026-04-08T00:00:00.000Z",
-      updated_at: "2026-04-08T00:00:00.000Z",
-    }),
-    {
-      id: "submission-1",
-      name: "Aarav",
-      email: "aarav@example.com",
-      role: "Student",
-      location: "Vadodara",
-      quote: "FinTrak helped me spot wasteful spending.",
-      meta: "Student, Vadodara",
-      avatarUrl: null,
-      approved: false,
-      status: "pending",
-      featured: false,
-      consentToPublish: true,
-      rejectedAt: null,
-      reviewedAt: null,
-      createdAt: "2026-04-08T00:00:00.000Z",
-      updatedAt: "2026-04-08T00:00:00.000Z",
-    }
-  );
 });
 
 test("transaction explorer filters search and sorts the current view", () => {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { ArrowRight, Eye, EyeOff, KeyRound, LifeBuoy } from "lucide-react";
+import { apiFetch } from "../lib/apiClient.js";
 
 const SUPPORT_EMAIL = "support@fintrak.online";
 
@@ -38,7 +39,7 @@ export default function ResetPasswordPage() {
     }
 
     startTransition(async () => {
-      const response = await fetch("/api/auth/reset-password", {
+      const response = await apiFetch("/api/auth/reset-password", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

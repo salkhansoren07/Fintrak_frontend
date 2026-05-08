@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "./AuthContext";
 import { fetchCloudUserData, saveCloudUserData } from "../lib/userDataClient";
@@ -15,15 +22,28 @@ import {
   reportClientWarning,
 } from "../lib/observability.client.js";
 import {
+  appendMlSyncHistory,
+  readMlSyncHistory,
+} from "../lib/mlSyncHistoryStorage.mjs";
+import {
+  applyCategoryRules,
+  mergeCategoryRules,
+  normalizeCategoryRules,
+} from "../lib/categoryRules.mjs";
+import {
   clearLegacyCategoryOverrides,
   readCategoryOverrides,
   writeCategoryOverrides,
 } from "../lib/categoryOverridesStorage.mjs";
+import {
+  readCategoryRules,
+  writeCategoryRules,
+} from "../lib/categoryRulesStorage.mjs";
 import { readBudgetTargets } from "../lib/budgetStorage.mjs";
 
 const TransactionContext = createContext();
 
-const TRANSACTION_CACHE_VERSION = 2;
+const TRANSACTION_CACHE_VERSION = 3;
 const TRANSACTION_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function readTransactionCache(userKey) {
@@ -48,7 +68,7 @@ function readTransactionCache(userKey) {
   }
 }
 
-function writeTransactionCache(userKey, transactions) {
+function writeTransactionCache(userKey, transactions, meta = null) {
   const cacheKey = buildTransactionCacheKey(userKey);
   if (!cacheKey) return;
 
@@ -58,6 +78,7 @@ function writeTransactionCache(userKey, transactions) {
       version: TRANSACTION_CACHE_VERSION,
       savedAt: Date.now(),
       transactions,
+      meta,
     })
   );
 }
@@ -67,6 +88,10 @@ function applyOverrides(transactions, overrides) {
     ...transaction,
     category: overrides[transaction.id] || transaction.category,
   }));
+}
+
+function applyUserCategoryPreferences(transactions, rules, overrides) {
+  return applyOverrides(applyCategoryRules(transactions, rules, overrides), overrides);
 }
 
 function isQuotaError(message) {
@@ -85,6 +110,8 @@ export function TransactionProvider({ children }) {
   const [loading, setLoading] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [syncWarning, setSyncWarning] = useState("");
+  const [syncMeta, setSyncMeta] = useState(null);
+  const [syncHistory, setSyncHistory] = useState([]);
 
   const [dateFilter, setDateFilter] = useState({
     type: "month",
@@ -93,36 +120,42 @@ export function TransactionProvider({ children }) {
     end: null,
   });
 
-  useEffect(() => {
-    if (!authenticated) {
-      setTransactions([]);
-      setLoading(false);
-      setSyncError("");
-      setSyncWarning("");
-      return;
-    }
+  const refreshTransactions = useCallback(
+    async (options = {}) => {
+      if (!authenticated) {
+        setTransactions([]);
+        setLoading(false);
+        setSyncError("");
+        setSyncWarning("");
+        setSyncMeta(null);
+        setSyncHistory([]);
+        return;
+      }
 
-    const { isUnlocked } = readClientSession(user?.id, hasPasscode);
+      const { isUnlocked } = readClientSession(user?.id, hasPasscode);
 
-    if (!isUnlocked || isSessionSetupRoute(pathname)) {
-      setTransactions([]);
-      setLoading(false);
-      setSyncError("");
-      setSyncWarning("");
-      return;
-    }
+      if (!isUnlocked || isSessionSetupRoute(pathname)) {
+        setTransactions([]);
+        setLoading(false);
+        setSyncError("");
+        setSyncWarning("");
+        setSyncMeta(null);
+        setSyncHistory([]);
+        return;
+      }
 
-    let cancelled = false;
-
-    async function loadTransactions() {
+      const forceRefresh = options.forceRefresh === true;
       setLoading(true);
       setSyncError("");
       setSyncWarning("");
       let cachedTransactions = [];
 
       try {
+        setSyncHistory(readMlSyncHistory(user?.id));
         const localOverrides = readCategoryOverrides(user?.id);
+        const localRules = normalizeCategoryRules(readCategoryRules(user?.id));
         let cloudOverrides = {};
+        let cloudRules = [];
         let userKey = resolveTransactionCacheUserKey({
           authenticatedUserId: user?.id,
         });
@@ -134,6 +167,9 @@ export function TransactionProvider({ children }) {
             typeof cloudData.categoryOverrides === "object"
           ) {
             cloudOverrides = cloudData.categoryOverrides;
+          }
+          if (Array.isArray(cloudData?.categoryRules)) {
+            cloudRules = normalizeCategoryRules(cloudData.categoryRules);
           }
           userKey = resolveTransactionCacheUserKey({
             authenticatedUserId: user?.id,
@@ -149,20 +185,25 @@ export function TransactionProvider({ children }) {
         }
 
         const overrides = { ...cloudOverrides, ...localOverrides };
+        const rules = mergeCategoryRules(cloudRules, localRules);
         writeCategoryOverrides(user?.id, overrides);
+        writeCategoryRules(user?.id, rules);
         clearLegacyCategoryOverrides();
 
         if (
-          Object.keys(localOverrides).length > 0 &&
-          Object.keys(cloudOverrides).length === 0
+          (Object.keys(localOverrides).length > 0 &&
+            Object.keys(cloudOverrides).length === 0) ||
+          (localRules.length > 0 && cloudRules.length === 0)
         ) {
           saveCloudUserData({
             categoryOverrides: overrides,
             budgetTargets: readBudgetTargets(user?.id),
+            categoryRules: rules,
           }).catch((error) => {
             reportClientWarning({
               event: "transactions.cloud_sync_write_failed",
-              message: "Cloud sync write failed while persisting category overrides.",
+              message:
+                "Cloud sync write failed while persisting saved transaction preferences.",
               error,
               context: { userId: user?.id || null },
             });
@@ -170,34 +211,54 @@ export function TransactionProvider({ children }) {
         }
 
         const cache = readTransactionCache(userKey);
-        cachedTransactions = applyOverrides(cache?.transactions || [], overrides);
+        cachedTransactions = applyUserCategoryPreferences(
+          cache?.transactions || [],
+          rules,
+          overrides
+        );
 
-        if (!cancelled && cachedTransactions.length > 0) {
+        if (cachedTransactions.length > 0) {
           setTransactions(cachedTransactions);
+          setSyncMeta(cache?.meta ? { ...cache.meta, cached: true } : null);
         }
 
         if (
+          !forceRefresh &&
           cache?.savedAt &&
           Date.now() - Number(cache.savedAt) < TRANSACTION_CACHE_TTL_MS
         ) {
-          if (!cancelled) {
-            setLoading(false);
-          }
+          setLoading(false);
           return;
         }
 
-        const gmailData = await fetchGmailTransactions();
-        const parsed = applyOverrides(gmailData?.transactions || [], overrides);
-
-        if (cancelled) return;
+        const gmailData = await fetchGmailTransactions({ forceRefresh });
+        const rawTransactions = gmailData?.transactions || [];
+        const parsed = applyUserCategoryPreferences(
+          rawTransactions,
+          rules,
+          overrides
+        );
 
         setTransactions(parsed);
-        writeTransactionCache(gmailData?.userKey || userKey, parsed);
+        const nextMeta = gmailData?.meta
+          ? {
+              ...gmailData.meta,
+              cached: Boolean(gmailData?.cached),
+              recordedAt: new Date().toISOString(),
+            }
+          : null;
+        setSyncMeta(nextMeta);
+        if (nextMeta) {
+          setSyncHistory(appendMlSyncHistory(user?.id, nextMeta));
+        }
+        writeTransactionCache(
+          gmailData?.userKey || userKey,
+          rawTransactions,
+          gmailData?.meta || null
+        );
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to sync Gmail";
-
-        if (cancelled) return;
 
         if (err?.status === 429 || isQuotaError(message)) {
           reportClientWarning({
@@ -249,19 +310,17 @@ export function TransactionProvider({ children }) {
           context: { userId: user?.id || null },
         });
         setSyncError(message);
+        throw err instanceof Error ? err : new Error(message);
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
-    }
+    },
+    [authenticated, hasPasscode, pathname, refreshSession, user?.id]
+  );
 
-    loadTransactions();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authenticated, hasPasscode, pathname, refreshSession, user?.id]);
+  useEffect(() => {
+    refreshTransactions().catch(() => null);
+  }, [refreshTransactions]);
 
   const filteredTransactions = useMemo(() => {
     if (!transactions.length) return [];
@@ -304,6 +363,9 @@ export function TransactionProvider({ children }) {
         loading,
         syncError,
         syncWarning,
+        syncMeta,
+        syncHistory,
+        refreshTransactions,
         dateFilter,
         setDateFilter,
         filteredTransactions,

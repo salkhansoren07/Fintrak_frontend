@@ -20,6 +20,20 @@ import {
   registerFailedPasscodeAttempt,
 } from "../app/lib/passcodeSecurity.mjs";
 import {
+  applyCategoryRules,
+  buildCategoryRuleFromTransaction,
+} from "../app/lib/categoryRules.mjs";
+import {
+  buildCategoryRulesStorageKey,
+  readCategoryRules,
+  writeCategoryRules,
+} from "../app/lib/categoryRulesStorage.mjs";
+import {
+  appendMlSyncHistory,
+  buildMlSyncHistoryStorageKey,
+  readMlSyncHistory,
+} from "../app/lib/mlSyncHistoryStorage.mjs";
+import {
   encodeUserDataProfile,
   normalizeStoredUserDataProfile,
 } from "../app/lib/userDataProfile.mjs";
@@ -108,16 +122,171 @@ test("legacy shared category overrides are ignored", () => {
   assert.deepEqual(readCategoryOverrides("user-c", storage), {});
 });
 
-test("user data profile preserves budgets and category overrides", () => {
+test("category rules are scoped per user", () => {
+  const storage = createStorage();
+
+  writeCategoryRules(
+    "user-a",
+    [
+      {
+        id: "rule-1",
+        field: "vpa",
+        operator: "contains",
+        value: "swiggy@ibl",
+        category: "Food",
+        enabled: true,
+      },
+    ],
+    storage
+  );
+  writeCategoryRules(
+    "user-b",
+    [
+      {
+        id: "rule-2",
+        field: "bank",
+        operator: "equals",
+        value: "SBI",
+        category: "Bills",
+        enabled: true,
+      },
+    ],
+    storage
+  );
+
+  assert.deepEqual(readCategoryRules("user-a", storage), [
+    {
+      id: "rule-1",
+      field: "vpa",
+      operator: "contains",
+      value: "swiggy@ibl",
+      category: "Food",
+      enabled: true,
+    },
+  ]);
+  assert.deepEqual(readCategoryRules("user-b", storage), [
+    {
+      id: "rule-2",
+      field: "bank",
+      operator: "equals",
+      value: "SBI",
+      category: "Bills",
+      enabled: true,
+    },
+  ]);
+  assert.equal(buildCategoryRulesStorageKey("user-a"), "categoryRules:user-a");
+});
+
+test("ml sync history is scoped per user and prepends the newest entry", () => {
+  const storage = createStorage();
+
+  appendMlSyncHistory(
+    "user-a",
+    {
+      recordedAt: "2026-04-30T10:00:00.000Z",
+      mlPredictionsApplied: 1,
+    },
+    storage
+  );
+  appendMlSyncHistory(
+    "user-a",
+    {
+      recordedAt: "2026-04-30T11:00:00.000Z",
+      mlPredictionsApplied: 3,
+    },
+    storage
+  );
+  appendMlSyncHistory(
+    "user-b",
+    {
+      recordedAt: "2026-04-30T09:00:00.000Z",
+      mlPredictionsApplied: 2,
+    },
+    storage
+  );
+
+  assert.equal(buildMlSyncHistoryStorageKey("user-a"), "mlSyncHistory:user-a");
+  assert.deepEqual(
+    readMlSyncHistory("user-a", storage).map((entry) => entry.mlPredictionsApplied),
+    [3, 1]
+  );
+  assert.deepEqual(
+    readMlSyncHistory("user-b", storage).map((entry) => entry.mlPredictionsApplied),
+    [2]
+  );
+});
+
+test("user data profile preserves budgets, category overrides, and category rules", () => {
   const encoded = encodeUserDataProfile({
     categoryOverrides: { txn1: "Food" },
     budgetTargets: { Food: 5000, Bills: 2500 },
+    categoryRules: [
+      {
+        id: "rule-1",
+        field: "vpa",
+        operator: "contains",
+        value: "swiggy@ibl",
+        category: "Food",
+        enabled: true,
+      },
+    ],
   });
 
   assert.deepEqual(normalizeStoredUserDataProfile(encoded), {
     categoryOverrides: { txn1: "Food" },
     budgetTargets: { Food: 5000, Bills: 2500 },
+    categoryRules: [
+      {
+        id: "rule-1",
+        field: "vpa",
+        operator: "contains",
+        value: "swiggy@ibl",
+        category: "Food",
+        enabled: true,
+        createdAt: null,
+      },
+    ],
   });
+});
+
+test("custom transaction rules apply before manual overrides", () => {
+  const rule = buildCategoryRuleFromTransaction(
+    {
+      id: "txn-1",
+      bank: "HDFC",
+      vpa: "swiggy@ibl",
+      category: "Other",
+    },
+    "Food"
+  );
+
+  const transactions = [
+    {
+      id: "txn-1",
+      bank: "HDFC",
+      vpa: "swiggy@ibl",
+      category: "Other",
+    },
+    {
+      id: "txn-2",
+      bank: "HDFC",
+      vpa: "swiggy@ibl",
+      category: "Other",
+    },
+    {
+      id: "txn-3",
+      bank: "SBI",
+      vpa: "rent@upi",
+      category: "Other",
+    },
+  ];
+
+  assert.deepEqual(
+    applyCategoryRules(transactions, [rule], { "txn-2": "Bills" }).map(
+      (transaction) => transaction.category
+    ),
+    ["Food", "Bills", "Other"]
+  );
 });
 
 test("username validation matches production signup requirements", () => {

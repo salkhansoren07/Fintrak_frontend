@@ -6,6 +6,14 @@ function normalizeRuleValue(value) {
   return normalizeText(value).toLowerCase();
 }
 
+function normalizeRuleField(field) {
+  return normalizeText(field).toLowerCase();
+}
+
+function normalizeRuleOperator(operator) {
+  return normalizeText(operator).toLowerCase();
+}
+
 function isSupportedField(field) {
   return field === "vpa" || field === "bank";
 }
@@ -28,8 +36,8 @@ export function normalizeCategoryRule(rule) {
   }
 
   const id = normalizeText(rule.id);
-  const field = normalizeText(rule.field).toLowerCase();
-  const operator = normalizeText(rule.operator).toLowerCase();
+  const field = normalizeRuleField(rule.field);
+  const operator = normalizeRuleOperator(rule.operator);
   const value = normalizeText(rule.value);
   const category = normalizeText(rule.category);
 
@@ -57,12 +65,25 @@ export function normalizeCategoryRule(rule) {
   };
 }
 
+export function buildCategoryRuleSignature(rule) {
+  const field = normalizeRuleField(rule?.field);
+  const operator = normalizeRuleOperator(rule?.operator);
+  const value = normalizeRuleValue(rule?.value);
+
+  if (!isSupportedField(field) || !isSupportedOperator(operator) || !value) {
+    return null;
+  }
+
+  return `${field}:${operator}:${value}`;
+}
+
 export function normalizeCategoryRules(rules) {
   if (!Array.isArray(rules)) {
     return [];
   }
 
-  const byId = new Map();
+  const bySignature = new Map();
+  const signatureById = new Map();
 
   for (const rule of rules) {
     const normalized = normalizeCategoryRule(rule);
@@ -70,22 +91,26 @@ export function normalizeCategoryRules(rules) {
       continue;
     }
 
-    byId.set(normalized.id, normalized);
+    const signature = buildCategoryRuleSignature(normalized);
+    if (!signature) {
+      continue;
+    }
+
+    const priorSignature = signatureById.get(normalized.id);
+    if (priorSignature) {
+      bySignature.delete(priorSignature);
+    }
+
+    bySignature.delete(signature);
+    bySignature.set(signature, normalized);
+    signatureById.set(normalized.id, signature);
   }
 
-  return [...byId.values()];
+  return [...bySignature.values()];
 }
 
 export function mergeCategoryRules(...ruleGroups) {
-  const merged = new Map();
-
-  for (const rules of ruleGroups) {
-    for (const rule of normalizeCategoryRules(rules)) {
-      merged.set(rule.id, rule);
-    }
-  }
-
-  return [...merged.values()];
+  return normalizeCategoryRules(ruleGroups.flat());
 }
 
 export function getTransactionRuleCandidate(transaction) {
@@ -130,15 +155,14 @@ export function buildCategoryRuleFromTransaction(transaction, category) {
 }
 
 export function findMatchingCategoryRuleIndex(rules, candidate) {
-  const normalizedField = normalizeText(candidate?.field).toLowerCase();
-  const normalizedOperator = normalizeText(candidate?.operator).toLowerCase();
-  const normalizedValue = normalizeRuleValue(candidate?.value);
+  const candidateSignature = buildCategoryRuleSignature(candidate);
+
+  if (!candidateSignature) {
+    return -1;
+  }
 
   return normalizeCategoryRules(rules).findIndex(
-    (rule) =>
-      rule.field === normalizedField &&
-      rule.operator === normalizedOperator &&
-      normalizeRuleValue(rule.value) === normalizedValue
+    (rule) => buildCategoryRuleSignature(rule) === candidateSignature
   );
 }
 
@@ -168,33 +192,42 @@ export function applyCategoryRules(transactions = [], rules = [], overrides = {}
     (rule) => rule.enabled !== false
   );
 
-  if (!normalizedRules.length) {
-    return [...transactions];
-  }
-
   return transactions.map((transaction) => {
+    const baseCategory = normalizeText(
+      transaction?.baseCategory || transaction?.category
+    );
+    const nextBaseTransaction =
+      transaction?.baseCategory === baseCategory
+        ? transaction
+        : {
+            ...transaction,
+            baseCategory,
+          };
+
     if (overrides?.[transaction.id]) {
-      if (overrides[transaction.id] === transaction.category) {
-        return transaction;
+      if (overrides[transaction.id] === nextBaseTransaction.category) {
+        return nextBaseTransaction;
       }
 
       return {
-        ...transaction,
+        ...nextBaseTransaction,
         category: overrides[transaction.id],
       };
     }
 
     const matchedRule = normalizedRules.find((rule) =>
-      matchesCategoryRule(transaction, rule)
+      matchesCategoryRule(nextBaseTransaction, rule)
     );
 
-    if (!matchedRule || matchedRule.category === transaction.category) {
-      return transaction;
+    const nextCategory = matchedRule ? matchedRule.category : baseCategory;
+
+    if (nextCategory === nextBaseTransaction.category) {
+      return nextBaseTransaction;
     }
 
     return {
-      ...transaction,
-      category: matchedRule.category,
+      ...nextBaseTransaction,
+      category: nextCategory,
     };
   });
 }

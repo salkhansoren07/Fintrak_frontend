@@ -1,7 +1,7 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Download, Search, SlidersHorizontal, X } from "lucide-react";
+import { Download, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { saveCloudUserData } from "../lib/userDataClient";
 import {
   readCategoryOverrides,
@@ -13,6 +13,7 @@ import {
   findMatchingCategoryRuleIndex,
   getTransactionRuleCandidate,
   mergeCategoryRules,
+  normalizeCategoryRules,
 } from "../lib/categoryRules.mjs";
 import {
   readCategoryRules,
@@ -39,6 +40,7 @@ export default function TransactionTable({ transactions = [] }) {
   const { user } = useAuth();
   const { setTransactions } = useTransactions();
   const [displayTransactions, setDisplayTransactions] = useState(transactions);
+  const [savedRules, setSavedRules] = useState([]);
   const [syncNotice, setSyncNotice] = useState("");
   const [explorer, setExplorer] = useState(createTransactionExplorerState());
   const deferredSearch = useDeferredValue(explorer.search);
@@ -46,6 +48,10 @@ export default function TransactionTable({ transactions = [] }) {
   useEffect(() => {
     setDisplayTransactions(transactions);
   }, [transactions]);
+
+  useEffect(() => {
+    setSavedRules(normalizeCategoryRules(readCategoryRules(user?.id)));
+  }, [transactions, user?.id]);
 
   const bankOptions = useMemo(
     () => uniqueOptions(displayTransactions.map((transaction) => transaction.bank)),
@@ -75,10 +81,69 @@ export default function TransactionTable({ transactions = [] }) {
       }, 0),
     [explorerTransactions]
   );
+  const orderedRules = useMemo(
+    () =>
+      [...savedRules].sort((left, right) => {
+        const leftCreatedAt = Number(left?.createdAt || 0);
+        const rightCreatedAt = Number(right?.createdAt || 0);
+        return rightCreatedAt - leftCreatedAt;
+      }),
+    [savedRules]
+  );
+
+  const applyRuleSetLocally = (nextRules) => {
+    const normalizedRules = normalizeCategoryRules(nextRules);
+    const overrides = readCategoryOverrides(user?.id);
+
+    setSavedRules(normalizedRules);
+    writeCategoryRules(user?.id, normalizedRules);
+    setDisplayTransactions((current) =>
+      applyCategoryRules(current, normalizedRules, overrides)
+    );
+    setTransactions((current) =>
+      applyCategoryRules(current, normalizedRules, overrides)
+    );
+
+    return { normalizedRules, overrides };
+  };
+
+  const syncRuleSet = async ({
+    nextRules,
+    localNotice,
+    cloudNotice,
+    warningEvent,
+    warningMessage,
+    warningContext = {},
+  }) => {
+    const { normalizedRules, overrides } = applyRuleSetLocally(nextRules);
+    setSyncNotice(localNotice);
+
+    try {
+      await saveCloudUserData({
+        categoryOverrides: overrides,
+        budgetTargets: readBudgetTargets(user?.id),
+        categoryRules: normalizedRules,
+      });
+      setSyncNotice(cloudNotice);
+    } catch (error) {
+      reportClientWarning({
+        event: warningEvent,
+        message: warningMessage,
+        error,
+        context: {
+          userId: user?.id || null,
+          ...warningContext,
+        },
+      });
+      setSyncNotice(
+        "Rule changes were saved on this device. Cloud sync is unavailable right now."
+      );
+    }
+  };
 
   const updateCategory = async (id, category) => {
     const existing = readCategoryOverrides(user?.id);
-    const categoryRules = readCategoryRules(user?.id);
+    const categoryRules = normalizeCategoryRules(readCategoryRules(user?.id));
 
     existing[id] = category;
 
@@ -134,7 +199,7 @@ export default function TransactionTable({ transactions = [] }) {
       return;
     }
 
-    const currentRules = readCategoryRules(user?.id);
+    const currentRules = normalizeCategoryRules(readCategoryRules(user?.id));
     const existingRuleIndex = findMatchingCategoryRuleIndex(currentRules, candidate);
     const nextRule =
       existingRuleIndex >= 0
@@ -157,37 +222,77 @@ export default function TransactionTable({ transactions = [] }) {
             index === existingRuleIndex ? nextRule : rule
           )
         : mergeCategoryRules(currentRules, [nextRule]);
-    const overrides = readCategoryOverrides(user?.id);
+    await syncRuleSet({
+      nextRules,
+      localNotice: `Rule saved. ${candidate.label} will now map to ${category}.`,
+      cloudNotice: `Rule synced. ${candidate.label} now maps to ${category}.`,
+      warningEvent: "transactions.category_rule_sync_failed",
+      warningMessage:
+        "Cloud sync write failed while saving a custom transaction rule.",
+      warningContext: {
+        ruleField: candidate.field,
+        ruleValue: candidate.value,
+      },
+    });
+  };
 
-    setDisplayTransactions((current) =>
-      applyCategoryRules(current, nextRules, overrides)
+  const updateSavedRuleCategory = async (ruleId, category) => {
+    const nextRules = savedRules.map((rule) =>
+      rule.id === ruleId
+        ? {
+            ...rule,
+            category,
+            enabled: true,
+          }
+        : rule
     );
-    setTransactions((current) => applyCategoryRules(current, nextRules, overrides));
-    writeCategoryRules(user?.id, nextRules);
-    setSyncNotice(`Rule saved. ${candidate.label} will now map to ${category}.`);
 
-    try {
-      await saveCloudUserData({
-        categoryOverrides: overrides,
-        budgetTargets: readBudgetTargets(user?.id),
-        categoryRules: nextRules,
-      });
-      setSyncNotice(`Rule synced. ${candidate.label} now maps to ${category}.`);
-    } catch (error) {
-      reportClientWarning({
-        event: "transactions.category_rule_sync_failed",
-        message: "Cloud sync write failed while saving a custom transaction rule.",
-        error,
-        context: {
-          userId: user?.id || null,
-          ruleField: candidate.field,
-          ruleValue: candidate.value,
-        },
-      });
-      setSyncNotice(
-        "Rule saved on this device. Cloud sync is unavailable right now."
-      );
-    }
+    await syncRuleSet({
+      nextRules,
+      localNotice: "Rule updated locally.",
+      cloudNotice: "Rule update synced to your account.",
+      warningEvent: "transactions.category_rule_update_failed",
+      warningMessage:
+        "Cloud sync write failed while updating a custom transaction rule.",
+      warningContext: { ruleId, nextCategory: category },
+    });
+  };
+
+  const toggleSavedRuleEnabled = async (ruleId, enabled) => {
+    const nextRules = savedRules.map((rule) =>
+      rule.id === ruleId
+        ? {
+            ...rule,
+            enabled,
+          }
+        : rule
+    );
+
+    await syncRuleSet({
+      nextRules,
+      localNotice: enabled ? "Rule enabled locally." : "Rule disabled locally.",
+      cloudNotice: enabled
+        ? "Rule enabled across your account."
+        : "Rule disabled across your account.",
+      warningEvent: "transactions.category_rule_toggle_failed",
+      warningMessage:
+        "Cloud sync write failed while toggling a custom transaction rule.",
+      warningContext: { ruleId, enabled },
+    });
+  };
+
+  const deleteSavedRule = async (ruleId) => {
+    const nextRules = savedRules.filter((rule) => rule.id !== ruleId);
+
+    await syncRuleSet({
+      nextRules,
+      localNotice: "Rule removed locally.",
+      cloudNotice: "Rule removed from your account.",
+      warningEvent: "transactions.category_rule_delete_failed",
+      warningMessage:
+        "Cloud sync write failed while deleting a custom transaction rule.",
+      warningContext: { ruleId },
+    });
   };
 
   const clearExplorerFilters = () => {
@@ -213,6 +318,12 @@ export default function TransactionTable({ transactions = [] }) {
     window.URL.revokeObjectURL(url);
   };
 
+  const renderRuleLabel = (rule) => {
+    const fieldLabel = rule.field === "vpa" ? "VPA" : "Bank";
+    const operatorLabel = rule.operator === "contains" ? "contains" : "is";
+    return `${fieldLabel} ${operatorLabel} "${rule.value}"`;
+  };
+
   return (
     <section className="mt-8 overflow-hidden rounded-[32px] border border-slate-200/80 bg-white/90 shadow-[0_20px_60px_-34px_rgba(15,23,42,0.45)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/70">
       <div className="border-b border-slate-200/80 px-5 py-5 dark:border-slate-800/80 md:px-6">
@@ -233,6 +344,79 @@ export default function TransactionTable({ transactions = [] }) {
           <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
             {syncNotice}
           </p>
+        ) : null}
+
+        {orderedRules.length ? (
+          <div className="mt-5 rounded-[28px] border border-blue-100 bg-blue-50/70 p-4 dark:border-blue-900/40 dark:bg-blue-950/10">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-700 dark:text-blue-300">
+                  Custom rules
+                </p>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                  Similar transactions are recategorized automatically before manual overrides.
+                </p>
+              </div>
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                {orderedRules.length} saved
+              </p>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {orderedRules.map((rule) => (
+                <div
+                  key={rule.id}
+                  className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-white/90 px-4 py-4 dark:border-blue-900/30 dark:bg-slate-950/70 lg:flex-row lg:items-center lg:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                      {renderRuleLabel(rule)}
+                    </p>
+                    <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                      {rule.enabled ? "Active rule" : "Paused rule"}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={rule.enabled !== false}
+                        onChange={(e) =>
+                          toggleSavedRuleEnabled(rule.id, e.target.checked)
+                        }
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-700"
+                      />
+                      Enabled
+                    </label>
+
+                    <select
+                      value={rule.category}
+                      onChange={(e) =>
+                        updateSavedRuleCategory(rule.id, e.target.value)
+                      }
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-blue-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                    >
+                      {DEFAULT_CATEGORIES.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => deleteSavedRule(rule.id)}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-300 dark:hover:bg-rose-950/20"
+                    >
+                      <Trash2 size={15} />
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : null}
 
         <div className="mt-5 rounded-[28px] border border-slate-200/80 bg-slate-50/80 p-4 dark:border-slate-800/80 dark:bg-slate-900/50">

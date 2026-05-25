@@ -156,14 +156,6 @@ export default function Sidebar({ onClose }) {
     ...(user?.isAdmin
       ? [
           {
-            href: "/admin/ml",
-            label: "Admin ML",
-            icon: SlidersHorizontal,
-            active:
-              pathname.startsWith("/admin/ml") ||
-              pathname.startsWith("/admin/ml-diagnostics"),
-          },
-          {
             href: "/admin/testimonials",
             label: "Admin Testimonials",
             icon: MessageSquareQuote,

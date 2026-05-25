@@ -22,10 +22,6 @@ import {
   reportClientWarning,
 } from "../lib/observability.client.js";
 import {
-  appendMlSyncHistory,
-  readMlSyncHistory,
-} from "../lib/mlSyncHistoryStorage.mjs";
-import {
   applyCategoryRules,
   mergeCategoryRules,
   normalizeCategoryRules,
@@ -83,15 +79,26 @@ function writeTransactionCache(userKey, transactions, meta = null) {
   );
 }
 
-function applyOverrides(transactions, overrides) {
-  return transactions.map((transaction) => ({
-    ...transaction,
-    category: overrides[transaction.id] || transaction.category,
-  }));
+function withBaseCategories(transactions = []) {
+  return transactions.map((transaction) => {
+    const baseCategory =
+      typeof transaction?.baseCategory === "string" && transaction.baseCategory.trim()
+        ? transaction.baseCategory
+        : transaction.category;
+
+    if (transaction.baseCategory === baseCategory) {
+      return transaction;
+    }
+
+    return {
+      ...transaction,
+      baseCategory,
+    };
+  });
 }
 
 function applyUserCategoryPreferences(transactions, rules, overrides) {
-  return applyOverrides(applyCategoryRules(transactions, rules, overrides), overrides);
+  return applyCategoryRules(withBaseCategories(transactions), rules, overrides);
 }
 
 function isQuotaError(message) {
@@ -110,8 +117,6 @@ export function TransactionProvider({ children }) {
   const [loading, setLoading] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [syncWarning, setSyncWarning] = useState("");
-  const [syncMeta, setSyncMeta] = useState(null);
-  const [syncHistory, setSyncHistory] = useState([]);
 
   const [dateFilter, setDateFilter] = useState({
     type: "month",
@@ -127,8 +132,6 @@ export function TransactionProvider({ children }) {
         setLoading(false);
         setSyncError("");
         setSyncWarning("");
-        setSyncMeta(null);
-        setSyncHistory([]);
         return;
       }
 
@@ -139,8 +142,6 @@ export function TransactionProvider({ children }) {
         setLoading(false);
         setSyncError("");
         setSyncWarning("");
-        setSyncMeta(null);
-        setSyncHistory([]);
         return;
       }
 
@@ -151,7 +152,6 @@ export function TransactionProvider({ children }) {
       let cachedTransactions = [];
 
       try {
-        setSyncHistory(readMlSyncHistory(user?.id));
         const localOverrides = readCategoryOverrides(user?.id);
         const localRules = normalizeCategoryRules(readCategoryRules(user?.id));
         let cloudOverrides = {};
@@ -219,7 +219,6 @@ export function TransactionProvider({ children }) {
 
         if (cachedTransactions.length > 0) {
           setTransactions(cachedTransactions);
-          setSyncMeta(cache?.meta ? { ...cache.meta, cached: true } : null);
         }
 
         if (
@@ -240,22 +239,7 @@ export function TransactionProvider({ children }) {
         );
 
         setTransactions(parsed);
-        const nextMeta = gmailData?.meta
-          ? {
-              ...gmailData.meta,
-              cached: Boolean(gmailData?.cached),
-              recordedAt: new Date().toISOString(),
-            }
-          : null;
-        setSyncMeta(nextMeta);
-        if (nextMeta) {
-          setSyncHistory(appendMlSyncHistory(user?.id, nextMeta));
-        }
-        writeTransactionCache(
-          gmailData?.userKey || userKey,
-          rawTransactions,
-          gmailData?.meta || null
-        );
+        writeTransactionCache(gmailData?.userKey || userKey, rawTransactions);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to sync Gmail";
@@ -363,12 +347,10 @@ export function TransactionProvider({ children }) {
         loading,
         syncError,
         syncWarning,
-        syncMeta,
-        syncHistory,
-        refreshTransactions,
         dateFilter,
         setDateFilter,
         filteredTransactions,
+        refreshTransactions,
       }}
     >
       {children}
